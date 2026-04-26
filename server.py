@@ -52,6 +52,21 @@ struct sensor_data {
     double lon_cd;		// lon_cd = longitude (non-RTK)
     double lat_rtk;		// lat_rtk = latitude (RTK)
     double lon_rtk;	// lon_rtk = longitude (RTK)
+
+    
+    double bmp_lpf;         // meters
+    double gyro_lpf[3];     // deg / s
+    double attitude_lpf[4]; // quaternion
+
+    double thrust; 
+    double moment; 
+    double beta_y_deg; 
+    double beta_z_deg; 
+
+    uint16_t props_top_pwm; // pwm (1000-2500)
+    uint16_t props_btm_pwm; // pwm (1000-2500)
+    uint16_t tvc_y_deg; // degs
+    uint16_t tvc_z_deg; // degs
     
     uint8_t temp;		// temp = power board core temp (C) * 255 / 64
     uint8_t batt_voltage; 	// batt_voltage = battery voltage (V) * 255 / 16
@@ -71,6 +86,26 @@ SENSOR_STATE = {
     "lon_cd": 0.0,
     "lat_rtk": 0.0,
     "lon_rtk": 0.0,
+
+    # lpf outputs
+    "bmp_lpf": 0.0, 
+    "gyro_lpf": [0, 0, 0], 
+    "attitude_lpf": [0, 0, 0, 0], 
+
+    # controls outputs (phase 1)
+    "thrust": 0.0, 
+    "moment": 0.0, 
+    "beta_y_deg": 0.0, 
+    "beta_z_deg": 0.0, 
+
+    # controls outputs (phase 2)
+    "props_top_pwm": 0, 
+    "props_btm_pwm": 0, 
+    "tvc_y_deg": 0, 
+    "tvc_z_deg": 0, 
+
+
+
     "temperature": 0.0,
     "esc_voltage": 0.0,
     "servo_voltage": 0.0,
@@ -88,7 +123,7 @@ SENSOR_STATE = {
     ]
 }
 
-STRUCT_FORMAT = "<11h3b4d5B"
+STRUCT_FORMAT = "<11h3b16d4H5B"
 STRUCT_LENGTH = struct.calcsize(STRUCT_FORMAT)
 
 CONNECTION_TIMEOUT = 5.0
@@ -118,14 +153,18 @@ def update_thread():
         if data is not None:
             current_data.extend(data)
 
+        # print(current_data)
+
         while len(current_data) >= STRUCT_LENGTH:
-            frame = bytes(current_data[:STRUCT_LENGTH])
-            print(f"!!! FRAME: {frame.hex()}")
-            current_data = current_data[STRUCT_LENGTH:]
+            next_start = current_data.find(b"67")
+            data_start = next_start + 2
+            frame = bytes(current_data[data_start:data_start+STRUCT_LENGTH])
+
+            print(frame)
+            current_data = current_data[data_start+STRUCT_LENGTH:]
 
             try:
                 unpacked = struct.unpack(STRUCT_FORMAT, frame)
-                print(unpacked)
 
                 # Field offsets in <11h3b4d3B payload:
                 SENSOR_STATE["altitude_bmp"] = unpacked[0] / 10.0
@@ -138,15 +177,31 @@ def update_thread():
                 SENSOR_STATE["lon_cd"] = unpacked[15]
                 SENSOR_STATE["lat_rtk"] = unpacked[16]
                 SENSOR_STATE["lon_rtk"] = unpacked[17]
-                SENSOR_STATE["temperature"] = unpacked[18] * 64 / 255.
-                SENSOR_STATE["esc_voltage"] = unpacked[19] * 16 / 255.
-                SENSOR_STATE["servo_voltage"] = unpacked[20] * 8 / 255
+
+                SENSOR_STATE["bmp_lpf"] = unpacked[18]
+                SENSOR_STATE["gyro_lpf"] = unpacked[19:22]
+                SENSOR_STATE["attitude_lpf"] = unpacked[22:26]
+
+                SENSOR_STATE["thrust"] = unpacked[26]
+                SENSOR_STATE["moment"] = unpacked[27]
+                SENSOR_STATE["beta_y_deg"] = unpacked[28]
+                SENSOR_STATE["beta_z_deg"] = unpacked[29]
+
+                SENSOR_STATE["props_top_pwm"] = unpacked[30]
+                SENSOR_STATE["props_btm_pwm"] = unpacked[31]
+                SENSOR_STATE["tvc_y_deg"] = unpacked[32]
+                SENSOR_STATE["tvc_z_deg"] = unpacked[33]
+
+
+                SENSOR_STATE["temperature"] = unpacked[34] * 64 / 255.
+                SENSOR_STATE["esc_voltage"] = unpacked[35] * 16 / 255.
+                SENSOR_STATE["servo_voltage"] = unpacked[36] * 8 / 255
 
                 for i, sensor in enumerate(SENSOR_STATE["health"]):
-                    SENSOR_STATE["health"][i][1] = bool(unpacked[21] & (1 << (7-i)))
+                    SENSOR_STATE["health"][i][1] = bool(unpacked[37] & (1 << (7-i)))
 
                 LAST_RECEIVED_TIME = time.time()
-                COUNTS.append(unpacked[22])
+                COUNTS.append(unpacked[38])
                 if len(COUNTS) > 5:
                     COUNTS.pop(0)
 
